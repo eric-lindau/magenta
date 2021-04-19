@@ -10,12 +10,20 @@ ds = tfp.distributions
 
 class LatentDiscriminator():
   def __init__(self, z_size):
+    self._cross_entropy_fn = keras.losses.BinaryCrossentropy(from_logits=True)
     self._d = keras.Sequential(
       layers.Dense(z_size, activation='sigmoid'),
       layers.Dense(2048, activation='sigmoid'),
       layers.Dense(2048, activation='sigmoid'),
       layers.Dense(1, activation='sigmoid'),
     )
+
+  def loss(self, real, fake):
+    # https://www.tensorflow.org/tutorials/generative/dcgan
+    real_loss = self._cross_entropy_fn(tf.ones_like(real), real)
+    fake_loss = self._cross_entropy_fn(tf.zeros_like(fake), fake)
+    total_loss = real_loss + fake_loss
+    return total_loss
 
 
 class AdversarialMusicVAE(MusicVAE):
@@ -26,7 +34,7 @@ class AdversarialMusicVAE(MusicVAE):
 
   def __init__(self, encoder, decoder, discriminator):
     super(MusicVAE, self).__init__(encoder, decoder)
-    self._discriminator = discriminator
+    self.discriminator = discriminator
 
   # TODO: add discriminator loss using data point(s) and latent point(s)
   def _compute_model_loss(
@@ -67,29 +75,34 @@ class AdversarialMusicVAE(MusicVAE):
         loc=[0.] * hparams.z_size, scale_diag=[1.] * hparams.z_size)
 
       # KL Divergence (nats)
-      kl_div = ds.kl_divergence(q_z, p_z)
+      # kl_div = ds.kl_divergence(q_z, p_z)
 
       # Concatenate the Z vectors to the inputs at each time step.
     else:  # unconditional, decoder-only generation
-      kl_div = tf.zeros([batch_size, 1], dtype=tf.float32)
+      # kl_div = tf.zeros([batch_size, 1], dtype=tf.float32)
       z = None
 
     r_loss, metric_map = self.decoder.reconstruction_loss(
       x_input, x_target, x_length, z, control_sequence)[0:2]
 
-    free_nats = hparams.free_bits * tf.math.log(2.0)
-    kl_cost = tf.maximum(kl_div - free_nats, 0)
+    d_loss = self.discriminator.loss(ds.MultivariateNormalDiag(loc=0, scale_diag=1).sample(), z)
 
-    beta = ((1.0 - tf.pow(hparams.beta_rate, tf.to_float(self.global_step)))
-            * hparams.max_beta)
+    self.loss = tf.reduce_mean(r_loss) + tf.reduce_mean(d_loss)
 
-    self.loss = tf.reduce_mean(r_loss) + beta * tf.reduce_mean(kl_cost)
+    # free_nats = hparams.free_bits * tf.math.log(2.0)
+    # kl_cost = tf.maximum(kl_div - free_nats, 0)
+
+    # beta = ((1.0 - tf.pow(hparams.beta_rate, tf.to_float(self.global_step)))
+    #         * hparams.max_beta)
+
+    # self.loss = tf.reduce_mean(r_loss) + beta * tf.reduce_mean(kl_cost)
 
     scalars_to_summarize = {
       'loss': self.loss,
       'losses/r_loss': r_loss,
-      'losses/kl_loss': kl_cost,
-      'losses/kl_bits': kl_div / tf.math.log(2.0),
-      'losses/kl_beta': beta,
+      'losses/d_loss': d_loss,
+      # 'losses/kl_loss': kl_cost,
+      # 'losses/kl_bits': kl_div / tf.math.log(2.0),
+      # 'losses/kl_beta': beta,
     }
     return metric_map, scalars_to_summarize

@@ -413,6 +413,7 @@ CONFIG_MAP['hier-mel_16bar'] = Config(
 )
 
 # Adversarial
+# TODO: add support for taking MusicVAE as an arg instead and preload weights before modifying network
 CONFIG_MAP['gan-hier-mel_16bar'] = Config(
     model=AdversarialMusicVAE(
         lstm_models.HierarchicalLstmEncoder(
