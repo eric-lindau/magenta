@@ -1,6 +1,6 @@
 from .base_model import MusicVAE
 
-import tensorflow as tf
+import tensorflow.compat.v1 as tf
 from tensorflow import keras
 from tensorflow.keras import layers
 import tensorflow_probability as tfp
@@ -11,12 +11,11 @@ ds = tfp.distributions
 class LatentDiscriminator():
   def __init__(self, z_size):
     self._cross_entropy_fn = keras.losses.BinaryCrossentropy(from_logits=True)
-    self._d = keras.Sequential(
-      layers.Dense(z_size, activation='sigmoid'),
-      layers.Dense(2048, activation='sigmoid'),
-      layers.Dense(2048, activation='sigmoid'),
-      layers.Dense(1, activation='sigmoid'),
-    )
+    self._d = keras.Sequential()
+    self._d.add(layers.Dense(z_size, activation='sigmoid'))
+    self._d.add(layers.Dense(2048, activation='sigmoid'))
+    self._d.add(layers.Dense(2048, activation='sigmoid'))
+    self._d.add(layers.Dense(1, activation='sigmoid'))
 
   def loss(self, real, fake):
     # https://www.tensorflow.org/tutorials/generative/dcgan
@@ -65,14 +64,14 @@ class AdversarialMusicVAE(MusicVAE):
                      [(0, 0), (1, 0), (0, 0)])
     x_length = tf.minimum(sequence_length, max_seq_len)
 
+    # Prior distribution.
+    p_z = ds.MultivariateNormalDiag(
+      loc=[0.] * hparams.z_size, scale_diag=[1.] * hparams.z_size)
+
     # Either encode to get `z`, or do unconditional, decoder-only.
     if hparams.z_size:  # vae mode:
       q_z = self.encode(input_sequence, x_length, control_sequence)
       z = q_z.sample()
-
-      # Prior distribution.
-      p_z = ds.MultivariateNormalDiag(
-        loc=[0.] * hparams.z_size, scale_diag=[1.] * hparams.z_size)
 
       # KL Divergence (nats)
       # kl_div = ds.kl_divergence(q_z, p_z)
@@ -85,7 +84,7 @@ class AdversarialMusicVAE(MusicVAE):
     r_loss, metric_map = self.decoder.reconstruction_loss(
       x_input, x_target, x_length, z, control_sequence)[0:2]
 
-    d_loss = self.discriminator.loss(ds.MultivariateNormalDiag(loc=0, scale_diag=1).sample(), z)
+    d_loss = self.discriminator.loss(p_z.sample(), z)
 
     self.loss = tf.reduce_mean(r_loss) + tf.reduce_mean(d_loss)
 

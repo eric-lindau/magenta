@@ -22,7 +22,7 @@ from magenta.models.music_vae import data
 from magenta.models.music_vae import data_hierarchical
 from magenta.models.music_vae import lstm_models
 from magenta.models.music_vae.base_model import MusicVAE
-from magenta.models.music_vae.gan_models import AdversarialMusicVAE
+from magenta.models.music_vae.gan_models import AdversarialMusicVAE, LatentDiscriminator
 import note_seq
 
 HParams = contrib_training.HParams
@@ -422,7 +422,7 @@ CONFIG_MAP['gan-hier-mel_16bar'] = Config(
             lstm_models.CategoricalLstmDecoder(),
             level_lengths=[16, 16],
             disable_autoregression=True),
-        None  # TODO: provide discriminator
+        LatentDiscriminator(512)
     ),
     hparams=merge_hparams(
         lstm_models.get_default_hparams(),
