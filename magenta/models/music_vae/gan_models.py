@@ -33,7 +33,7 @@ class AdversarialMusicVAE(MusicVAE):
   """
 
   def __init__(self, encoder, decoder, discriminator):
-    super(MusicVAE, self).__init__(encoder, decoder)
+    super(AdversarialMusicVAE, self).__init__(encoder, decoder)
     self.discriminator = discriminator
 
   # TODO: add discriminator loss using data point(s) and latent point(s)
