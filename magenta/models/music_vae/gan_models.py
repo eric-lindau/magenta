@@ -69,17 +69,17 @@ class AdversarialMusicVAE(MusicVAE):
       loc=[0.] * hparams.z_size, scale_diag=[1.] * hparams.z_size)
 
     # Either encode to get `z`, or do unconditional, decoder-only.
-    if hparams.z_size:  # vae mode:
-      q_z = self.encode(input_sequence, x_length, control_sequence)
-      z = q_z.sample()
+    # if hparams.z_size:  # vae mode:
+    q_z = self.encode(input_sequence, x_length, control_sequence)
+    z = q_z.sample()
 
-      # KL Divergence (nats)
-      # kl_div = ds.kl_divergence(q_z, p_z)
+    # KL Divergence (nats)
+    # kl_div = ds.kl_divergence(q_z, p_z)
 
-      # Concatenate the Z vectors to the inputs at each time step.
-    else:  # unconditional, decoder-only generation
-      # kl_div = tf.zeros([batch_size, 1], dtype=tf.float32)
-      z = None
+    # Concatenate the Z vectors to the inputs at each time step.
+    # else:  # unconditional, decoder-only generation
+    # kl_div = tf.zeros([batch_size, 1], dtype=tf.float32)
+    # z = None
 
     r_loss, metric_map = self.decoder.reconstruction_loss(
       x_input, x_target, x_length, z, control_sequence)[0:2]
