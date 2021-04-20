@@ -183,8 +183,9 @@ def train_adversarial(train_dir,
                   config.data_converter.output_depth,
                   is_training=True)
 
+      # assume len(optimizers) == len(losses)
       optimizers = model.train(**_get_input_tensors(dataset_fn(), config))
-      losses = [model.r_loss, model.d_loss]
+      losses = model.losses
 
       hooks = []
       if num_sync_workers:
@@ -210,13 +211,12 @@ def train_adversarial(train_dir,
         for i in range(len(optimizers))
       ]
       train_op = tf.group(*ops)
-      # train_op = optimizers[0].apply_gradients(
-      #       list(zip(grads[0], var_list[0])),
-      #       global_step=model.global_step,
-      #       name='train_step_' + str(0))
 
-      logging_dict = {'global_step': model.global_step,
-                      'loss': model.r_loss + model.d_loss} # TODO: log all losses
+      logging_dict = {'global_step': model.global_step}
+      logging_dict.update({
+        'loss_' + str(i): losses[i]
+        for i in range(len(optimizers))
+      })
 
       hooks.append(tf.train.LoggingTensorHook(logging_dict, every_n_iter=100))
       if num_steps:

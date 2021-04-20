@@ -441,6 +441,32 @@ CONFIG_MAP['gan-hier-mel_16bar'] = Config(
     eval_examples_path=None,
 )
 
+CONFIG_MAP['gan-hierdec-mel_16bar'] = Config(
+    model=AdversarialMusicVAE(
+        lstm_models.BidirectionalLstmEncoder(),
+        lstm_models.HierarchicalLstmDecoder(
+            lstm_models.CategoricalLstmDecoder(),
+            level_lengths=[16, 16],
+            disable_autoregression=True),
+        LatentDiscriminator()
+    ),
+    hparams=merge_hparams(
+        lstm_models.get_default_hparams(),
+        HParams(
+            batch_size=512,
+            max_seq_len=256,
+            z_size=512,
+            enc_rnn_size=[2048, 2048],
+            dec_rnn_size=[1024, 1024],
+            free_bits=256,
+            max_beta=0.2,
+        )),
+    note_sequence_augmenter=None,
+    data_converter=mel_16bar_converter,
+    train_examples_path=None,
+    eval_examples_path=None,
+)
+
 # Multitrack
 multiperf_encoder = lstm_models.HierarchicalLstmEncoder(
     lstm_models.BidirectionalLstmEncoder,
