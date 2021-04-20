@@ -422,7 +422,7 @@ CONFIG_MAP['gan-hier-mel_16bar'] = Config(
             lstm_models.CategoricalLstmDecoder(),
             level_lengths=[16, 16],
             disable_autoregression=True),
-        LatentDiscriminator(512)
+        LatentDiscriminator()
     ),
     hparams=merge_hparams(
         lstm_models.get_default_hparams(),

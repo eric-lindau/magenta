@@ -134,6 +134,108 @@ def _get_input_tensors(dataset, config):
   }
 
 
+@tf.function
+def compute_and_clip_gradients(config, optimizer, loss):
+  with tf.GradientTape() as tape:
+    grads, var_list = list(zip(*optimizer.compute_gradients(loss)))
+    global_norm = tf.global_norm(grads)
+    tf.summary.scalar('global_norm', global_norm)
+
+    if config.hparams.clip_mode == 'value':
+      g = config.hparams.grad_clip
+      clipped_grads = [tf.clip_by_value(grad, -g, g) for grad in grads]
+    elif config.hparams.clip_mode == 'global_norm':
+      clipped_grads = tf.cond(
+        global_norm < config.hparams.grad_norm_clip_to_zero,
+        lambda: tf.clip_by_global_norm(  # pylint:disable=g-long-lambda
+          grads, config.hparams.grad_clip, use_norm=global_norm)[0],
+        lambda: [tf.zeros(tf.shape(g)) for g in grads])
+    else:
+      raise ValueError(
+        'Unknown clip_mode: {}'.format(config.hparams.clip_mode))
+
+    return grads, var_list
+
+
+def train_adversarial(train_dir,
+                      config,
+                      dataset_fn,
+                      checkpoints_to_keep=5,
+                      keep_checkpoint_every_n_hours=1,
+                      num_steps=None,
+                      master='',
+                      num_sync_workers=0,
+                      num_ps_tasks=0,
+                      task=0):
+  """Train loop, with an extra discriminator gradient step."""
+  tf.gfile.MakeDirs(train_dir)
+  is_chief = (task == 0)
+  if is_chief:
+    _trial_summary(
+      config.hparams, config.train_examples_path or config.tfds_name,
+      train_dir)
+  with tf.Graph().as_default():
+    with tf.device(tf.train.replica_device_setter(
+        num_ps_tasks, merge_devices=True)):
+
+      model = config.model
+      model.build(config.hparams,
+                  config.data_converter.output_depth,
+                  is_training=True)
+
+      optimizers = model.train(**_get_input_tensors(dataset_fn(), config))
+      losses = [model.r_loss, model.d_loss]
+
+      hooks = []
+      if num_sync_workers:
+        for i in range(len(optimizers)):
+          optimizers[i] = tf.train.SyncReplicasOptimizer(
+            optimizers[i],
+            num_sync_workers)
+          hooks.append(optimizers[i].make_session_run_hook(is_chief))
+
+      grads = [None for i in range(len(optimizers))]
+      var_list = [None for i in range(len(optimizers))]
+
+      for i in range(len(optimizers)):
+        # grads[i], var_list[i] = compute_and_clip_gradients(config, optimizers[i], losses[i])
+        # TODO: re-introduce clipping
+        grads[i], var_list[i] = list(zip(*optimizers[i].compute_gradients(losses[i])))
+
+      ops = [
+        optimizers[i].apply_gradients(
+            list(zip(grads[i], var_list[i])),
+            global_step=model.global_step,
+            name='train_step_' + str(i))
+        for i in range(len(optimizers))
+      ]
+      train_op = tf.group(*ops)
+      # train_op = optimizers[0].apply_gradients(
+      #       list(zip(grads[0], var_list[0])),
+      #       global_step=model.global_step,
+      #       name='train_step_' + str(0))
+
+      logging_dict = {'global_step': model.global_step,
+                      'loss': model.r_loss + model.d_loss} # TODO: log all losses
+
+      hooks.append(tf.train.LoggingTensorHook(logging_dict, every_n_iter=100))
+      if num_steps:
+        hooks.append(tf.train.StopAtStepHook(last_step=num_steps))
+
+      scaffold = tf.train.Scaffold(
+        saver=tf.train.Saver(
+          max_to_keep=checkpoints_to_keep,
+          keep_checkpoint_every_n_hours=keep_checkpoint_every_n_hours))
+      tf_slim.training.train(
+        train_op=train_op,
+        logdir=train_dir,
+        scaffold=scaffold,
+        hooks=hooks,
+        save_checkpoint_secs=60,
+        master=master,
+        is_chief=is_chief)
+
+
 def train(train_dir,
           config,
           dataset_fn,
@@ -299,7 +401,8 @@ def run(config_map,
         cache_dataset=FLAGS.cache_dataset)
 
   if is_training:
-    train(
+    if 'gan' in FLAGS.config:
+      train_adversarial(
         train_dir,
         config=config,
         dataset_fn=dataset_fn,
@@ -310,6 +413,18 @@ def run(config_map,
         num_sync_workers=FLAGS.num_sync_workers,
         num_ps_tasks=FLAGS.num_ps_tasks,
         task=FLAGS.task)
+    else:
+      train(
+          train_dir,
+          config=config,
+          dataset_fn=dataset_fn,
+          checkpoints_to_keep=FLAGS.checkpoints_to_keep,
+          keep_checkpoint_every_n_hours=FLAGS.keep_checkpoint_every_n_hours,
+          num_steps=FLAGS.num_steps,
+          master=FLAGS.master,
+          num_sync_workers=FLAGS.num_sync_workers,
+          num_ps_tasks=FLAGS.num_ps_tasks,
+          task=FLAGS.task)
   else:
     num_batches = FLAGS.eval_num_batches or data.count_examples(
         config.eval_examples_path,
