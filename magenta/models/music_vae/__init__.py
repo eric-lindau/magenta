@@ -16,6 +16,7 @@
 from .base_model import BaseDecoder
 from .base_model import BaseEncoder
 from .base_model import MusicVAE
+from .gan_models import AdversarialMusicVAE
 
 from .configs import Config
 from .configs import update_config
