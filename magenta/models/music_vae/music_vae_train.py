@@ -308,7 +308,7 @@ def train(train_dir,
         logdir=train_dir,
         scaffold=scaffold,
         hooks=hooks,
-        save_checkpoint_secs=60,
+        save_checkpoint_secs=180,
         master=master,
         is_chief=is_chief)
 
