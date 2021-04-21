@@ -10,17 +10,19 @@ ds = tfp.distributions
 
 class LatentDiscriminator():
   def build(self, z_size):
-    self._cross_entropy_fn = keras.losses.BinaryCrossentropy(from_logits=True)
-    self._d = keras.Sequential()
-    self._d.add(layers.Dense(z_size, activation='sigmoid'))
-    self._d.add(layers.Dense(2048, activation='sigmoid'))
-    self._d.add(layers.Dense(2048, activation='sigmoid'))
-    self._d.add(layers.Dense(1, activation='sigmoid'))
+    self.cross_entropy = keras.losses.BinaryCrossentropy(from_logits=True)
+    self.D = keras.Sequential()
+    self.D.add(layers.Dense(z_size, activation='sigmoid'))
+    self.D.add(layers.Dense(2048, activation='sigmoid'))
+    self.D.add(layers.Dense(2048, activation='sigmoid'))
+    self.D.add(layers.Dense(1, activation='sigmoid'))
 
   def loss(self, real, fake):
     # https://www.tensorflow.org/tutorials/generative/dcgan
-    real_loss = self._cross_entropy_fn(tf.ones_like(real), real)
-    fake_loss = self._cross_entropy_fn(tf.zeros_like(fake), fake)
+    real_dist = self.D(real)
+    fake_dist = self.D(fake)
+    real_loss = self.cross_entropy(tf.ones_like(real_dist), real_dist)
+    fake_loss = self.cross_entropy(tf.zeros_like(fake_dist), fake_dist)
     total_loss = real_loss + fake_loss
     return total_loss
 
@@ -59,7 +61,7 @@ class AdversarialMusicVAE(MusicVAE):
     self._discriminator.build(hparams.z_size)
 
   def train(self, input_sequence, output_sequence, sequence_length,
-                          control_sequence=None):
+            control_sequence=None):
     """Train on the given sequences, returning multiple optimizers.
 
     Args:
@@ -177,12 +179,9 @@ class AdversarialMusicVAE(MusicVAE):
     q_z = self.encode(input_sequence, x_length, control_sequence)
     z = q_z.sample()
 
-    # TODO: ensure the shape is right. it should be (batch_size, 1)... I think
-    d_loss = self._discriminator.loss(p_z.sample(), z)
-
-    self.d_loss = tf.reduce_mean(d_loss)
+    self.d_loss = tf.reduce_mean(self._discriminator.loss(tf.stack([p_z.sample() for _ in range(batch_size)]), z))
 
     scalars_to_summarize = {
       'd_loss': self.d_loss,
     }
-    return {}, scalars_to_summarize
+    return self.d_loss, scalars_to_summarize

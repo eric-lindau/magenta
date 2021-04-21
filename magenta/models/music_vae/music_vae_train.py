@@ -25,62 +25,62 @@ flags = tf.app.flags
 FLAGS = flags.FLAGS
 
 flags.DEFINE_string(
-    'master', '',
-    'The TensorFlow master to use.')
+  'master', '',
+  'The TensorFlow master to use.')
 flags.DEFINE_string(
-    'examples_path', None,
-    'Path to a TFRecord file of NoteSequence examples. Overrides the config.')
+  'examples_path', None,
+  'Path to a TFRecord file of NoteSequence examples. Overrides the config.')
 flags.DEFINE_string(
-    'tfds_name', None,
-    'TensorFlow Datasets dataset name to use. Overrides the config.')
+  'tfds_name', None,
+  'TensorFlow Datasets dataset name to use. Overrides the config.')
 flags.DEFINE_string(
-    'run_dir', None,
-    'Path where checkpoints and summary events will be located during '
-    'training and evaluation. Separate subdirectories `train` and `eval` '
-    'will be created within this directory.')
+  'run_dir', None,
+  'Path where checkpoints and summary events will be located during '
+  'training and evaluation. Separate subdirectories `train` and `eval` '
+  'will be created within this directory.')
 flags.DEFINE_integer(
-    'num_steps', 200000,
-    'Number of training steps or `None` for infinite.')
+  'num_steps', 200000,
+  'Number of training steps or `None` for infinite.')
 flags.DEFINE_integer(
-    'eval_num_batches', None,
-    'Number of batches to use during evaluation or `None` for all batches '
-    'in the data source.')
+  'eval_num_batches', None,
+  'Number of batches to use during evaluation or `None` for all batches '
+  'in the data source.')
 flags.DEFINE_integer(
-    'checkpoints_to_keep', 100,
-    'Maximum number of checkpoints to keep in `train` mode or 0 for infinite.')
+  'checkpoints_to_keep', 100,
+  'Maximum number of checkpoints to keep in `train` mode or 0 for infinite.')
 flags.DEFINE_integer(
-    'keep_checkpoint_every_n_hours', 1,
-    'In addition to checkpoints_to_keep, keep a checkpoint every N hours.')
+  'keep_checkpoint_every_n_hours', 1,
+  'In addition to checkpoints_to_keep, keep a checkpoint every N hours.')
 flags.DEFINE_string(
-    'mode', 'train',
-    'Which mode to use (`train` or `eval`).')
+  'mode', 'train',
+  'Which mode to use (`train` or `eval`).')
 flags.DEFINE_string(
-    'config', '',
-    'The name of the config to use.')
+  'config', '',
+  'The name of the config to use.')
 flags.DEFINE_string(
-    'hparams', '',
-    'A comma-separated list of `name=value` hyperparameter values to merge '
-    'with those in the config.')
+  'hparams', '',
+  'A comma-separated list of `name=value` hyperparameter values to merge '
+  'with those in the config.')
 flags.DEFINE_bool(
-    'cache_dataset', True,
-    'Whether to cache the dataset in memory for improved training speed. May '
-    'cause memory errors for very large datasets.')
+  'cache_dataset', True,
+  'Whether to cache the dataset in memory for improved training speed. May '
+  'cause memory errors for very large datasets.')
 flags.DEFINE_integer(
-    'task', 0,
-    'The task number for this worker.')
+  'task', 0,
+  'The task number for this worker.')
 flags.DEFINE_integer(
-    'num_ps_tasks', 0,
-    'The number of parameter server tasks.')
+  'num_ps_tasks', 0,
+  'The number of parameter server tasks.')
 flags.DEFINE_integer(
-    'num_sync_workers', 0,
-    'The number of synchronized workers.')
+  'num_sync_workers', 0,
+  'The number of synchronized workers.')
 flags.DEFINE_string(
-    'eval_dir_suffix', '',
-    'Suffix to add to eval output directory.')
+  'eval_dir_suffix', '',
+  'Suffix to add to eval output directory.')
 flags.DEFINE_string(
-    'log', 'INFO',
-    'The threshold for what messages will be logged: '
-    'DEBUG, INFO, WARN, ERROR, or FATAL.')
+  'log', 'INFO',
+  'The threshold for what messages will be logged: '
+  'DEBUG, INFO, WARN, ERROR, or FATAL.')
 
 
 # Should not be called from within the graph to avoid redundant summaries.
@@ -88,8 +88,8 @@ def _trial_summary(hparams, examples_path, output_dir):
   """Writes a tensorboard text summary of the trial."""
 
   examples_path_summary = tf.summary.text(
-      'examples_path', tf.constant(examples_path, name='examples_path'),
-      collections=[])
+    'examples_path', tf.constant(examples_path, name='examples_path'),
+    collections=[])
 
   hparams_dict = hparams.values()
 
@@ -100,7 +100,7 @@ def _trial_summary(hparams, examples_path, output_dir):
   hparams_table = header + '\n'.join(lines) + '\n'
 
   hparam_summary = tf.summary.text(
-      'hparams', tf.constant(hparams_table, name='hparams'), collections=[])
+    'hparams', tf.constant(hparams_table, name='hparams'), collections=[])
 
   with tf.Session() as sess:
     writer = tf.summary.FileWriter(output_dir, graph=sess.graph)
@@ -116,45 +116,22 @@ def _get_input_tensors(dataset, config):
   (input_sequence, output_sequence, control_sequence,
    sequence_length) = iterator.get_next()
   input_sequence.set_shape(
-      [batch_size, None, config.data_converter.input_depth])
+    [batch_size, None, config.data_converter.input_depth])
   output_sequence.set_shape(
-      [batch_size, None, config.data_converter.output_depth])
+    [batch_size, None, config.data_converter.output_depth])
   if not config.data_converter.control_depth:
     control_sequence = None
   else:
     control_sequence.set_shape(
-        [batch_size, None, config.data_converter.control_depth])
+      [batch_size, None, config.data_converter.control_depth])
   sequence_length.set_shape([batch_size] + sequence_length.shape[1:].as_list())
 
   return {
-      'input_sequence': input_sequence,
-      'output_sequence': output_sequence,
-      'control_sequence': control_sequence,
-      'sequence_length': sequence_length
+    'input_sequence': input_sequence,
+    'output_sequence': output_sequence,
+    'control_sequence': control_sequence,
+    'sequence_length': sequence_length
   }
-
-
-@tf.function
-def compute_and_clip_gradients(config, optimizer, loss):
-  with tf.GradientTape() as tape:
-    grads, var_list = list(zip(*optimizer.compute_gradients(loss)))
-    global_norm = tf.global_norm(grads)
-    tf.summary.scalar('global_norm', global_norm)
-
-    if config.hparams.clip_mode == 'value':
-      g = config.hparams.grad_clip
-      clipped_grads = [tf.clip_by_value(grad, -g, g) for grad in grads]
-    elif config.hparams.clip_mode == 'global_norm':
-      clipped_grads = tf.cond(
-        global_norm < config.hparams.grad_norm_clip_to_zero,
-        lambda: tf.clip_by_global_norm(  # pylint:disable=g-long-lambda
-          grads, config.hparams.grad_clip, use_norm=global_norm)[0],
-        lambda: [tf.zeros(tf.shape(g)) for g in grads])
-    else:
-      raise ValueError(
-        'Unknown clip_mode: {}'.format(config.hparams.clip_mode))
-
-    return grads, var_list
 
 
 def train_adversarial(train_dir,
@@ -195,19 +172,42 @@ def train_adversarial(train_dir,
             num_sync_workers)
           hooks.append(optimizers[i].make_session_run_hook(is_chief))
 
-      grads = [None for i in range(len(optimizers))]
-      var_list = [None for i in range(len(optimizers))]
+      grads = []
+      var_list = []
 
       for i in range(len(optimizers)):
-        # grads[i], var_list[i] = compute_and_clip_gradients(config, optimizers[i], losses[i])
-        # TODO: re-introduce clipping
-        grads[i], var_list[i] = list(zip(*optimizers[i].compute_gradients(losses[i])))
+        # Unfortunately since the encoder/decoder are mostly written in legacy TF we cannot easily select which
+        # variables to differentiate against, making it difficult to do GAN training.
+        # As a hack, `None` gradients are manually set to zero.
+        grads_maybe, var_list_ = list(zip(*optimizers[i].compute_gradients(losses[i])))
+        grads_ = tuple(grads_maybe[i]
+                       if grads_maybe[i] is not None
+                       else tf.zeros_like(var_list_[i]) for i in range(len(grads_maybe)))
+
+        global_norm = tf.global_norm(grads_)
+        tf.summary.scalar('global_norm', global_norm)
+
+        if config.hparams.clip_mode == 'value':
+          g = config.hparams.grad_clip
+          clipped_grads_ = [tf.clip_by_value(grad, -g, g) for grad in grads_]
+        elif config.hparams.clip_mode == 'global_norm':
+          clipped_grads_ = tf.cond(
+            global_norm < config.hparams.grad_norm_clip_to_zero,
+            lambda: tf.clip_by_global_norm(  # pylint:disable=g-long-lambda
+              grads_, config.hparams.grad_clip, use_norm=global_norm)[0],
+            lambda: [tf.zeros(tf.shape(g)) for g in grads_])
+        else:
+          raise ValueError(
+            'Unknown clip_mode: {}'.format(config.hparams.clip_mode))
+
+        grads.append(clipped_grads_)
+        var_list.append(var_list_)
 
       ops = [
         optimizers[i].apply_gradients(
-            list(zip(grads[i], var_list[i])),
-            global_step=model.global_step,
-            name='train_step_' + str(i))
+          list(zip(grads[i], var_list[i])),
+          global_step=model.global_step,
+          name='train_step_' + str(i))
         for i in range(len(optimizers))
       ]
       train_op = tf.group(*ops)
@@ -251,8 +251,8 @@ def train(train_dir,
   is_chief = (task == 0)
   if is_chief:
     _trial_summary(
-        config.hparams, config.train_examples_path or config.tfds_name,
-        train_dir)
+      config.hparams, config.train_examples_path or config.tfds_name,
+      train_dir)
   with tf.Graph().as_default():
     with tf.device(tf.train.replica_device_setter(
         num_ps_tasks, merge_devices=True)):
@@ -267,8 +267,8 @@ def train(train_dir,
       hooks = []
       if num_sync_workers:
         optimizer = tf.train.SyncReplicasOptimizer(
-            optimizer,
-            num_sync_workers)
+          optimizer,
+          num_sync_workers)
         hooks.append(optimizer.make_session_run_hook(is_chief))
 
       grads, var_list = list(zip(*optimizer.compute_gradients(model.loss)))
@@ -280,17 +280,17 @@ def train(train_dir,
         clipped_grads = [tf.clip_by_value(grad, -g, g) for grad in grads]
       elif config.hparams.clip_mode == 'global_norm':
         clipped_grads = tf.cond(
-            global_norm < config.hparams.grad_norm_clip_to_zero,
-            lambda: tf.clip_by_global_norm(  # pylint:disable=g-long-lambda
-                grads, config.hparams.grad_clip, use_norm=global_norm)[0],
-            lambda: [tf.zeros(tf.shape(g)) for g in grads])
+          global_norm < config.hparams.grad_norm_clip_to_zero,
+          lambda: tf.clip_by_global_norm(  # pylint:disable=g-long-lambda
+            grads, config.hparams.grad_clip, use_norm=global_norm)[0],
+          lambda: [tf.zeros(tf.shape(g)) for g in grads])
       else:
         raise ValueError(
-            'Unknown clip_mode: {}'.format(config.hparams.clip_mode))
+          'Unknown clip_mode: {}'.format(config.hparams.clip_mode))
       train_op = optimizer.apply_gradients(
-          list(zip(clipped_grads, var_list)),
-          global_step=model.global_step,
-          name='train_step')
+        list(zip(clipped_grads, var_list)),
+        global_step=model.global_step,
+        name='train_step')
 
       logging_dict = {'global_step': model.global_step,
                       'loss': model.loss}
@@ -300,17 +300,17 @@ def train(train_dir,
         hooks.append(tf.train.StopAtStepHook(last_step=num_steps))
 
       scaffold = tf.train.Scaffold(
-          saver=tf.train.Saver(
-              max_to_keep=checkpoints_to_keep,
-              keep_checkpoint_every_n_hours=keep_checkpoint_every_n_hours))
+        saver=tf.train.Saver(
+          max_to_keep=checkpoints_to_keep,
+          keep_checkpoint_every_n_hours=keep_checkpoint_every_n_hours))
       tf_slim.training.train(
-          train_op=train_op,
-          logdir=train_dir,
-          scaffold=scaffold,
-          hooks=hooks,
-          save_checkpoint_secs=60,
-          master=master,
-          is_chief=is_chief)
+        train_op=train_op,
+        logdir=train_dir,
+        scaffold=scaffold,
+        hooks=hooks,
+        save_checkpoint_secs=60,
+        master=master,
+        is_chief=is_chief)
 
 
 def evaluate(train_dir,
@@ -323,7 +323,7 @@ def evaluate(train_dir,
   tf.gfile.MakeDirs(eval_dir)
 
   _trial_summary(
-      config.hparams, config.eval_examples_path or config.tfds_name, eval_dir)
+    config.hparams, config.eval_examples_path or config.tfds_name, eval_dir)
   with tf.Graph().as_default():
     model = config.model
     model.build(config.hparams,
@@ -331,18 +331,18 @@ def evaluate(train_dir,
                 is_training=False)
 
     eval_op = model.eval(
-        **_get_input_tensors(dataset_fn().take(num_batches), config))
+      **_get_input_tensors(dataset_fn().take(num_batches), config))
 
     hooks = [
-        tf_slim.evaluation.StopAfterNEvalsHook(num_batches),
-        tf_slim.evaluation.SummaryAtEndHook(eval_dir)
+      tf_slim.evaluation.StopAfterNEvalsHook(num_batches),
+      tf_slim.evaluation.SummaryAtEndHook(eval_dir)
     ]
     tf_slim.evaluation.evaluate_repeatedly(
-        train_dir,
-        eval_ops=eval_op,
-        hooks=hooks,
-        eval_interval_secs=60,
-        master=master)
+      train_dir,
+      eval_ops=eval_op,
+      hooks=hooks,
+      eval_interval_secs=60,
+      master=master)
 
 
 def run(config_map,
@@ -374,11 +374,11 @@ def run(config_map,
   config_update_map = {}
   if FLAGS.examples_path:
     config_update_map['%s_examples_path' % FLAGS.mode] = os.path.expanduser(
-        FLAGS.examples_path)
+      FLAGS.examples_path)
   if FLAGS.tfds_name:
     if FLAGS.examples_path:
       raise ValueError(
-          'At most one of --examples_path and --tfds_name can be set.')
+        'At most one of --examples_path and --tfds_name can be set.')
     config_update_map['tfds_name'] = FLAGS.tfds_name
     config_update_map['eval_examples_path'] = None
     config_update_map['train_examples_path'] = None
@@ -395,10 +395,10 @@ def run(config_map,
 
   def dataset_fn():
     return data.get_dataset(
-        config,
-        tf_file_reader=tf_file_reader,
-        is_training=is_training,
-        cache_dataset=FLAGS.cache_dataset)
+      config,
+      tf_file_reader=tf_file_reader,
+      is_training=is_training,
+      cache_dataset=FLAGS.cache_dataset)
 
   if is_training:
     if 'gan' in FLAGS.config:
@@ -415,30 +415,30 @@ def run(config_map,
         task=FLAGS.task)
     else:
       train(
-          train_dir,
-          config=config,
-          dataset_fn=dataset_fn,
-          checkpoints_to_keep=FLAGS.checkpoints_to_keep,
-          keep_checkpoint_every_n_hours=FLAGS.keep_checkpoint_every_n_hours,
-          num_steps=FLAGS.num_steps,
-          master=FLAGS.master,
-          num_sync_workers=FLAGS.num_sync_workers,
-          num_ps_tasks=FLAGS.num_ps_tasks,
-          task=FLAGS.task)
-  else:
-    num_batches = FLAGS.eval_num_batches or data.count_examples(
-        config.eval_examples_path,
-        config.tfds_name,
-        config.data_converter,
-        file_reader) // config.hparams.batch_size
-    eval_dir = os.path.join(run_dir, 'eval' + FLAGS.eval_dir_suffix)
-    evaluate(
         train_dir,
-        eval_dir,
         config=config,
         dataset_fn=dataset_fn,
-        num_batches=num_batches,
-        master=FLAGS.master)
+        checkpoints_to_keep=FLAGS.checkpoints_to_keep,
+        keep_checkpoint_every_n_hours=FLAGS.keep_checkpoint_every_n_hours,
+        num_steps=FLAGS.num_steps,
+        master=FLAGS.master,
+        num_sync_workers=FLAGS.num_sync_workers,
+        num_ps_tasks=FLAGS.num_ps_tasks,
+        task=FLAGS.task)
+  else:
+    num_batches = FLAGS.eval_num_batches or data.count_examples(
+      config.eval_examples_path,
+      config.tfds_name,
+      config.data_converter,
+      file_reader) // config.hparams.batch_size
+    eval_dir = os.path.join(run_dir, 'eval' + FLAGS.eval_dir_suffix)
+    evaluate(
+      train_dir,
+      eval_dir,
+      config=config,
+      dataset_fn=dataset_fn,
+      num_batches=num_batches,
+      master=FLAGS.master)
 
 
 def main(unused_argv):
