@@ -12,21 +12,24 @@ class LabelDiscriminator():
   def build(self, hparams):
     self.cross_entropy = keras.losses.BinaryCrossentropy(from_logits=True)
     self.D = keras.Sequential()
-    self.D.add(layers.Dense(hparams.n_clusters + 1, activation='sigmoid'))
+    self.D.add(layers.Dense(hparams.n_clusters, activation='sigmoid'))
     self.D.add(layers.Dense(2048, activation='sigmoid'))
     self.D.add(layers.Dense(2048, activation='sigmoid'))
     self.D.add(layers.Dense(1, activation='sigmoid'))
 
-  def loss(self, real, fake):
+  def loss_D(self, real, fake):
     real_dist = self.D(real)
-    fake_dist = self.D(fake)
     real_loss = self.cross_entropy(tf.ones_like(real_dist), real_dist)
+    return real_loss
+
+  def loss_G(self, real, fake):
+    fake_dist = self.D(fake)
     fake_loss = self.cross_entropy(tf.zeros_like(fake_dist), fake_dist)
-    total_loss = real_loss + fake_loss
-    return total_loss
+    return fake_loss
 
 
 class LatentDiscriminator():
+  # https://www.tensorflow.org/tutorials/generative/dcgan
   def build(self, hparams):
     self.cross_entropy = keras.losses.BinaryCrossentropy(from_logits=True)
     self.D = keras.Sequential()
@@ -35,14 +38,15 @@ class LatentDiscriminator():
     self.D.add(layers.Dense(2048, activation='sigmoid'))
     self.D.add(layers.Dense(1, activation='sigmoid'))
 
-  def loss(self, real, fake):
-    # https://www.tensorflow.org/tutorials/generative/dcgan
+  def loss_D(self, real, fake):
     real_dist = self.D(real)
-    fake_dist = self.D(fake)
     real_loss = self.cross_entropy(tf.ones_like(real_dist), real_dist)
+    return real_loss
+
+  def loss_G(self, real, fake):
+    fake_dist = self.D(fake)
     fake_loss = self.cross_entropy(tf.zeros_like(fake_dist), fake_dist)
-    total_loss = real_loss + fake_loss
-    return total_loss
+    return fake_loss
 
 
 class AdversarialMusicVAE(MusicVAE):
@@ -130,29 +134,21 @@ class AdversarialMusicVAE(MusicVAE):
           tf.pow(hparams.decay_rate, tf.to_float(self.global_step)) +
           hparams.min_learning_rate)
 
-    _, scalars_to_summarize = self._compute_model_loss(
-      input_sequence, output_sequence, sequence_length, control_sequence)
+    self._compute_model_loss(input_sequence, output_sequence, sequence_length, control_sequence)
+    self.loss_latent(input_sequence, output_sequence, sequence_length, control_sequence)
+    self.loss_label(input_sequence, output_sequence, sequence_length, control_sequence)
 
-    r_optimizer = tf.train.AdamOptimizer(lr)
+    opt_R = tf.train.AdamOptimizer(lr)
+    opt_D_latent = tf.train.AdamOptimizer(lr)
+    opt_G_latent = tf.train.AdamOptimizer(lr)
+    opt_D_label = tf.train.AdamOptimizer(lr)
+    opt_G_label = tf.train.AdamOptimizer(lr)
 
-    tf.summary.scalar('learning_rate_reconstruction', lr)
-    for n, t in scalars_to_summarize.items():
-      tf.summary.scalar(n, tf.reduce_mean(t))
-
-    _, scalars_to_summarize = self.loss_D_latent(
-      input_sequence, output_sequence, sequence_length, control_sequence)
-
-    d_optimizer = tf.train.AdamOptimizer(lr)
-
-    tf.summary.scalar('learning_rate_discriminator', lr)
-    for n, t in scalars_to_summarize.items():
-      tf.summary.scalar(n, tf.reduce_mean(t))
-
-    return [r_optimizer, d_optimizer]
+    return [opt_R, opt_D_latent, opt_G_latent, opt_D_label, opt_G_label]
 
   @property
   def losses(self):
-    return [self.r_loss, self.d_loss]
+    return [self.loss_R, self.loss_D_latent, self.loss_G_latent, self.loss_D_label, self.loss_G_label]
 
   def encode_label(self, input_sequence, sequence_length, control_sequence):
     sequence = tf.to_float(input_sequence)
@@ -198,16 +194,16 @@ class AdversarialMusicVAE(MusicVAE):
     r_loss, metric_map = self.decoder.reconstruction_loss(
       x_input, x_target, x_length, tf.concat([label, z], -1), control_sequence)[0:2]
 
-    self.r_loss = tf.reduce_mean(r_loss)
+    self.loss_R = tf.reduce_mean(r_loss)
 
     scalars_to_summarize = {
-      'r_loss': self.r_loss,
+      'loss_R': self.loss_R,
     }
     return metric_map, scalars_to_summarize
 
   # TODO: mention logits in report. essentially "this one is more likely to be drawn from". all relative
   # TODO: *** the new network outputs parameters to a categorical distribution. regularized by prior
-  def loss_D_label(self, input_sequence, output_sequence, sequence_length, control_sequence):
+  def loss_label(self, input_sequence, output_sequence, sequence_length, control_sequence):
     hparams = self.hparams
     batch_size = hparams.batch_size
 
@@ -235,19 +231,21 @@ class AdversarialMusicVAE(MusicVAE):
 
     # Prior distribution. Uniform categorical
     p_label = ds.OneHotCategorical(probs=[1 / hparams.n_clusters for _ in range(hparams.n_clusters)])
-    uniform_label = tf.stack([p_label.sample() for _ in range(batch_size)])
+    uniform_label = tf.to_float(tf.stack([p_label.sample() for _ in range(batch_size)]))
 
     q_label = self.encode_label(input_sequence, x_length, control_sequence)
-    label = q_label.sample()
+    label = tf.to_float(q_label.sample())
 
-    self.d_loss = tf.reduce_mean(self.D_latent.loss(uniform_label, label))
+    self.loss_D_label = tf.reduce_mean(self.D_label.loss_D(uniform_label, label))
+    self.loss_G_label = tf.reduce_mean(self.D_label.loss_G(uniform_label, label))
 
     scalars_to_summarize = {
-      'd_loss': self.d_loss,
+      'loss_D_label': self.loss_D_label,
+      'loss_G_label': self.loss_G_label,
     }
-    return self.d_loss, scalars_to_summarize
+    return {}, scalars_to_summarize
 
-  def loss_D_latent(self, input_sequence, output_sequence, sequence_length, control_sequence):
+  def loss_latent(self, input_sequence, output_sequence, sequence_length, control_sequence):
     hparams = self.hparams
     batch_size = hparams.batch_size
 
@@ -281,9 +279,11 @@ class AdversarialMusicVAE(MusicVAE):
     q_z = self.encode(input_sequence, x_length, control_sequence)
     z = q_z.sample()
 
-    self.d_loss = tf.reduce_mean(self.D_latent.loss(gaussian_z, z))
+    self.loss_D_latent = tf.reduce_mean(self.D_latent.loss_D(gaussian_z, z))
+    self.loss_G_latent = tf.reduce_mean(self.D_latent.loss_G(gaussian_z, z))
 
     scalars_to_summarize = {
-      'd_loss': self.d_loss,
+      'loss_D_latent': self.loss_D_latent,
+      'loss_G_latent': self.loss_G_latent,
     }
-    return self.d_loss, scalars_to_summarize
+    return {}, scalars_to_summarize
