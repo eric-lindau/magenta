@@ -12,7 +12,7 @@ class LabelDiscriminator():
   def build(self, hparams):
     self.cross_entropy = keras.losses.BinaryCrossentropy(from_logits=True)
     self.D = keras.Sequential()
-    self.D.add(layers.Dense(hparams.n_clusters, activation='sigmoid'))
+    self.D.add(layers.Dense(hparams.n_clusters + 1, activation='sigmoid'))
     self.D.add(layers.Dense(2048, activation='sigmoid'))
     self.D.add(layers.Dense(2048, activation='sigmoid'))
     self.D.add(layers.Dense(1, activation='sigmoid'))
@@ -95,7 +95,7 @@ class AdversarialMusicVAE(MusicVAE):
     self.D_latent.build(hparams)
     self.D_label.build(hparams)
 
-    self.encoder_label_dist = layers.Dense(
+    self.categorical = layers.Dense(
       hparams.n_clusters,
       activation=tf.nn.softplus,
       name='encoder/categorical'
@@ -154,6 +154,14 @@ class AdversarialMusicVAE(MusicVAE):
   def losses(self):
     return [self.r_loss, self.d_loss]
 
+  def encode_label(self, input_sequence, sequence_length, control_sequence):
+    sequence = tf.to_float(input_sequence)
+    if control_sequence is not None:
+      control_sequence = tf.to_float(control_sequence)
+      sequence = tf.concat([sequence, control_sequence], axis=-1)
+    encoder_output = self.encoder.encode(sequence, sequence_length)
+    return ds.OneHotCategorical(logits=self.categorical(encoder_output))
+
   def _compute_model_loss(self, input_sequence, output_sequence, sequence_length, control_sequence):
     """Builds a model with loss for train/eval."""
     hparams = self.hparams
@@ -184,8 +192,11 @@ class AdversarialMusicVAE(MusicVAE):
     q_z = self.encode(input_sequence, x_length, control_sequence)
     z = q_z.sample()
 
+    q_label = self.encode_label(input_sequence, x_length, control_sequence)
+    label = tf.to_float(q_label.sample())
+
     r_loss, metric_map = self.decoder.reconstruction_loss(
-      x_input, x_target, x_length, z, control_sequence)[0:2]
+      x_input, x_target, x_length, tf.concat([label, z], -1), control_sequence)[0:2]
 
     self.r_loss = tf.reduce_mean(r_loss)
 
@@ -223,17 +234,13 @@ class AdversarialMusicVAE(MusicVAE):
     x_length = tf.minimum(sequence_length, max_seq_len)
 
     # Prior distribution. Uniform categorical
-    p_z = ds.Categorical(probs=[1 / hparams.n_clusters for _ in range(hparams.n_clusters)])
+    p_label = ds.OneHotCategorical(probs=[1 / hparams.n_clusters for _ in range(hparams.n_clusters)])
+    uniform_label = tf.stack([p_label.sample() for _ in range(batch_size)])
 
-    sequence = tf.to_float(input_sequence)
-    if control_sequence is not None:
-      control_sequence = tf.to_float(control_sequence)
-      sequence = tf.concat([sequence, control_sequence], axis=-1)
-    encoder_output = self.encoder.encode(sequence, sequence_length)
-    q_z = ds.Categorical(logits=encoder_output)
-    z = q_z.sample()
+    q_label = self.encode_label(input_sequence, x_length, control_sequence)
+    label = q_label.sample()
 
-    self.d_loss = tf.reduce_mean(self.D_latent.loss(tf.stack([p_z.sample() for _ in range(batch_size)]), z))
+    self.d_loss = tf.reduce_mean(self.D_latent.loss(uniform_label, label))
 
     scalars_to_summarize = {
       'd_loss': self.d_loss,
@@ -266,14 +273,15 @@ class AdversarialMusicVAE(MusicVAE):
                      [(0, 0), (1, 0), (0, 0)])
     x_length = tf.minimum(sequence_length, max_seq_len)
 
-    # Prior distribution.
+    # Prior distribution. Standard gaussian
     p_z = ds.MultivariateNormalDiag(
       loc=[0.] * hparams.z_size, scale_diag=[1.] * hparams.z_size)
+    gaussian_z = tf.stack([p_z.sample() for _ in range(batch_size)])
 
     q_z = self.encode(input_sequence, x_length, control_sequence)
     z = q_z.sample()
 
-    self.d_loss = tf.reduce_mean(self.D_latent.loss(tf.stack([p_z.sample() for _ in range(batch_size)]), z))
+    self.d_loss = tf.reduce_mean(self.D_latent.loss(gaussian_z, z))
 
     scalars_to_summarize = {
       'd_loss': self.d_loss,
