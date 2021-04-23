@@ -19,12 +19,14 @@ class LabelDiscriminator():
 
   def loss_D(self, real, fake):
     real_dist = self.D(real)
-    real_loss = self.cross_entropy(tf.ones_like(real_dist), real_dist)
-    return real_loss
+    fake_dist = self.D(fake)
+    real_loss = self.cross_entropy(tf.ones_like(real_dist), real_dist)  # discriminator recognizes real samples
+    fake_loss = self.cross_entropy(tf.zeros_like(fake_dist), fake_dist)  # ... and rejects fake samples
+    return real_loss + fake_loss
 
   def loss_G(self, real, fake):
-    fake_dist = self.D(fake)
-    fake_loss = self.cross_entropy(tf.zeros_like(fake_dist), fake_dist)
+    fake_dist = self.D(fake)  # discriminator's distribution of probabilities for fake values
+    fake_loss = self.cross_entropy(tf.ones_like(fake_dist), fake_dist)  # generator produces realistic samples
     return fake_loss
 
 
