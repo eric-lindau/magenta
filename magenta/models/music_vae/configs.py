@@ -22,7 +22,7 @@ from magenta.models.music_vae import data
 from magenta.models.music_vae import data_hierarchical
 from magenta.models.music_vae import lstm_models
 from magenta.models.music_vae.base_model import MusicVAE
-from magenta.models.music_vae.gan_models import AdversarialMusicVAE, LatentDiscriminator
+from magenta.models.music_vae.gan_models import AdversarialMusicVAE, LatentDiscriminator, LabelDiscriminator
 import note_seq
 
 HParams = contrib_training.HParams
@@ -413,7 +413,27 @@ CONFIG_MAP['hier-mel_16bar'] = Config(
 )
 
 # Adversarial
-# TODO: add support for taking MusicVAE as an arg instead and preload weights before modifying network
+hparams_gan_hier = HParams(
+            batch_size=512,
+            max_seq_len=256,
+            z_size=512,
+            enc_rnn_size=[1024],
+            dec_rnn_size=[1024, 1024],
+            free_bits=256,
+            max_beta=0.2)
+hparams_gan_hier.add_hparam("n_clusters", 20)
+
+hparams_gan_hierdec = HParams(
+            batch_size=512,
+            max_seq_len=256,
+            z_size=512,
+            enc_rnn_size=[2048, 2048],
+            dec_rnn_size=[1024, 1024],
+            free_bits=256,
+            max_beta=0.2,
+        )
+hparams_gan_hierdec.add_hparam("n_clusters", 20)
+
 CONFIG_MAP['gan-hier-mel_16bar'] = Config(
     model=AdversarialMusicVAE(
         lstm_models.HierarchicalLstmEncoder(
@@ -422,19 +442,13 @@ CONFIG_MAP['gan-hier-mel_16bar'] = Config(
             lstm_models.CategoricalLstmDecoder(),
             level_lengths=[16, 16],
             disable_autoregression=True),
-        LatentDiscriminator()
+        LatentDiscriminator(),
+        LabelDiscriminator()
     ),
     hparams=merge_hparams(
         lstm_models.get_default_hparams(),
-        HParams(
-            batch_size=512,
-            max_seq_len=256,
-            z_size=512,
-            enc_rnn_size=[1024],
-            dec_rnn_size=[1024, 1024],
-            free_bits=256,
-            max_beta=0.2,
-        )),
+        hparams_gan_hier
+    ),
     note_sequence_augmenter=None,
     data_converter=mel_16bar_converter,
     train_examples_path=None,
@@ -448,19 +462,13 @@ CONFIG_MAP['gan-hierdec-mel_16bar'] = Config(
             lstm_models.CategoricalLstmDecoder(),
             level_lengths=[16, 16],
             disable_autoregression=True),
-        LatentDiscriminator()
+        LatentDiscriminator(),
+        LabelDiscriminator()
     ),
     hparams=merge_hparams(
         lstm_models.get_default_hparams(),
-        HParams(
-            batch_size=512,
-            max_seq_len=256,
-            z_size=512,
-            enc_rnn_size=[2048, 2048],
-            dec_rnn_size=[1024, 1024],
-            free_bits=256,
-            max_beta=0.2,
-        )),
+        hparams_gan_hierdec
+      ),
     note_sequence_augmenter=None,
     data_converter=mel_16bar_converter,
     train_examples_path=None,

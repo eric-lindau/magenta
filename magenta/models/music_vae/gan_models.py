@@ -8,21 +8,49 @@ import tensorflow_probability as tfp
 ds = tfp.distributions
 
 
-class LatentDiscriminator():
-  def build(self, z_size):
-    self._cross_entropy_fn = keras.losses.BinaryCrossentropy(from_logits=True)
-    self._d = keras.Sequential()
-    self._d.add(layers.Dense(z_size, activation='sigmoid'))
-    self._d.add(layers.Dense(2048, activation='sigmoid'))
-    self._d.add(layers.Dense(2048, activation='sigmoid'))
-    self._d.add(layers.Dense(1, activation='sigmoid'))
+class LabelDiscriminator():
+  def build(self, hparams):
+    self.cross_entropy = keras.losses.BinaryCrossentropy(from_logits=True)
+    self.D = keras.Sequential()
+    self.D.add(layers.Dense(hparams.n_clusters, activation='sigmoid'))
+    self.D.add(layers.Dense(2048, activation='sigmoid'))
+    self.D.add(layers.Dense(2048, activation='sigmoid'))
+    self.D.add(layers.Dense(1, activation='sigmoid'))
 
-  def loss(self, real, fake):
-    # https://www.tensorflow.org/tutorials/generative/dcgan
-    real_loss = self._cross_entropy_fn(tf.ones_like(real), real)
-    fake_loss = self._cross_entropy_fn(tf.zeros_like(fake), fake)
-    total_loss = real_loss + fake_loss
-    return total_loss
+  def loss_D(self, real, fake):
+    real_dist = self.D(real)
+    fake_dist = self.D(fake)
+    real_loss = self.cross_entropy(tf.ones_like(real_dist), real_dist)  # discriminator recognizes real samples
+    fake_loss = self.cross_entropy(tf.zeros_like(fake_dist), fake_dist)  # ... and rejects fake samples
+    return real_loss + fake_loss
+
+  def loss_G(self, real, fake):
+    fake_dist = self.D(fake)  # discriminator's distribution of probabilities for fake values
+    fake_loss = self.cross_entropy(tf.ones_like(fake_dist), fake_dist)  # generator produces realistic samples
+    return fake_loss
+
+
+class LatentDiscriminator():
+  # https://www.tensorflow.org/tutorials/generative/dcgan
+  def build(self, hparams):
+    self.cross_entropy = keras.losses.BinaryCrossentropy(from_logits=True)
+    self.D = keras.Sequential()
+    self.D.add(layers.Dense(hparams.z_size, activation='sigmoid'))
+    self.D.add(layers.Dense(2048, activation='sigmoid'))
+    self.D.add(layers.Dense(2048, activation='sigmoid'))
+    self.D.add(layers.Dense(1, activation='sigmoid'))
+
+  def loss_D(self, real, fake):
+    real_dist = self.D(real)
+    fake_dist = self.D(fake)
+    real_loss = self.cross_entropy(tf.ones_like(real_dist), real_dist)  # discriminator recognizes real samples
+    fake_loss = self.cross_entropy(tf.zeros_like(fake_dist), fake_dist)  # ... and rejects fake samples
+    return real_loss + fake_loss
+
+  def loss_G(self, real, fake):
+    fake_dist = self.D(fake)  # discriminator's distribution of probabilities for fake values
+    fake_loss = self.cross_entropy(tf.ones_like(fake_dist), fake_dist)  # generator produces realistic samples
+    return fake_loss
 
 
 class AdversarialMusicVAE(MusicVAE):
@@ -31,13 +59,15 @@ class AdversarialMusicVAE(MusicVAE):
   Extends VAE loss with discriminator loss to better regularize encodings
   """
 
-  def __init__(self, encoder, decoder, discriminator):
+  # TODO: parametrize priors
+  def __init__(self, encoder, decoder, D_latent, D_label):
     super(AdversarialMusicVAE, self).__init__(encoder, decoder)
-    self._discriminator = discriminator
+    self.D_latent = D_latent
+    self.D_label = D_label
 
   @property
   def discriminator(self):
-    return self._discriminator
+    return self.D_latent
 
   def build(self, hparams, output_depth, is_training):
     """Builds encoder and decoder.
@@ -55,11 +85,39 @@ class AdversarialMusicVAE(MusicVAE):
                     self.decoder.__class__.__name__,
                     self.discriminator.__class__.__name__,
                     hparams.values())
-    super(AdversarialMusicVAE, self).build(hparams, output_depth, is_training)
-    self._discriminator.build(hparams.z_size)
+    # Cannot rely on this because we need to adjust encoder input size
+    # super(AdversarialMusicVAE, self).build(hparams, output_depth, is_training)
+    self.global_step = tf.train.get_or_create_global_step()
+    self._hparams = hparams
+
+    self._mu = layers.Dense(
+      hparams.z_size,
+      name='encoder/mu',
+      kernel_initializer=tf.random_normal_initializer(stddev=0.001))
+    self._sigma = layers.Dense(
+      hparams.z_size,
+      activation=tf.nn.softplus,
+      name='encoder/sigma',
+      kernel_initializer=tf.random_normal_initializer(stddev=0.001))
+
+    self.D_latent.build(hparams)
+    self.D_label.build(hparams)
+
+    self.categorical = layers.Dense(
+      hparams.n_clusters,
+      activation=tf.nn.softplus,
+      name='encoder/categorical'
+    )
+
+    self._encoder.build(hparams, is_training)
+
+    # build decoder with assumed larger latent size, really it's just concatenated with label
+    hparams.z_size += hparams.n_clusters
+    self._decoder.build(hparams, output_depth, is_training)
+    hparams.z_size -= hparams.n_clusters
 
   def train(self, input_sequence, output_sequence, sequence_length,
-                          control_sequence=None):
+            control_sequence=None):
     """Train on the given sequences, returning multiple optimizers.
 
     Args:
@@ -80,29 +138,29 @@ class AdversarialMusicVAE(MusicVAE):
           tf.pow(hparams.decay_rate, tf.to_float(self.global_step)) +
           hparams.min_learning_rate)
 
-    _, scalars_to_summarize = self._compute_model_loss(
-      input_sequence, output_sequence, sequence_length, control_sequence)
+    self._compute_model_loss(input_sequence, output_sequence, sequence_length, control_sequence)
+    self.loss_latent(input_sequence, output_sequence, sequence_length, control_sequence)
+    self.loss_label(input_sequence, output_sequence, sequence_length, control_sequence)
 
-    r_optimizer = tf.train.AdamOptimizer(lr)
+    opt_R = tf.train.AdamOptimizer(lr)
+    opt_D_latent = tf.train.AdamOptimizer(lr)
+    opt_G_latent = tf.train.AdamOptimizer(lr)
+    opt_D_label = tf.train.AdamOptimizer(lr)
+    opt_G_label = tf.train.AdamOptimizer(lr)
 
-    tf.summary.scalar('learning_rate_reconstruction', lr)
-    for n, t in scalars_to_summarize.items():
-      tf.summary.scalar(n, tf.reduce_mean(t))
-
-    _, scalars_to_summarize = self._compute_discriminator_loss(
-      input_sequence, output_sequence, sequence_length, control_sequence)
-
-    d_optimizer = tf.train.AdamOptimizer(lr)
-
-    tf.summary.scalar('learning_rate_discriminator', lr)
-    for n, t in scalars_to_summarize.items():
-      tf.summary.scalar(n, tf.reduce_mean(t))
-
-    return [r_optimizer, d_optimizer]
+    return [opt_R, opt_D_latent, opt_G_latent, opt_D_label, opt_G_label]
 
   @property
   def losses(self):
-    return [self.r_loss, self.d_loss]
+    return [self.loss_R, self.loss_D_latent, self.loss_G_latent, self.loss_D_label, self.loss_G_label]
+
+  def encode_label(self, input_sequence, sequence_length, control_sequence):
+    sequence = tf.to_float(input_sequence)
+    if control_sequence is not None:
+      control_sequence = tf.to_float(control_sequence)
+      sequence = tf.concat([sequence, control_sequence], axis=-1)
+    encoder_output = self.encoder.encode(sequence, sequence_length)
+    return ds.OneHotCategorical(logits=self.categorical(encoder_output))
 
   def _compute_model_loss(self, input_sequence, output_sequence, sequence_length, control_sequence):
     """Builds a model with loss for train/eval."""
@@ -134,17 +192,22 @@ class AdversarialMusicVAE(MusicVAE):
     q_z = self.encode(input_sequence, x_length, control_sequence)
     z = q_z.sample()
 
-    r_loss, metric_map = self.decoder.reconstruction_loss(
-      x_input, x_target, x_length, z, control_sequence)[0:2]
+    q_label = self.encode_label(input_sequence, x_length, control_sequence)
+    label = tf.to_float(q_label.sample())
 
-    self.r_loss = tf.reduce_mean(r_loss)
+    r_loss, metric_map = self.decoder.reconstruction_loss(
+      x_input, x_target, x_length, tf.concat([label, z], -1), control_sequence)[0:2]
+
+    self.loss_R = tf.reduce_mean(r_loss)
 
     scalars_to_summarize = {
-      'r_loss': self.r_loss,
+      'loss_R': self.loss_R,
     }
     return metric_map, scalars_to_summarize
 
-  def _compute_discriminator_loss(self, input_sequence, output_sequence, sequence_length, control_sequence):
+  # TODO: mention logits in report. essentially "this one is more likely to be drawn from". all relative
+  # TODO: *** the new network outputs parameters to a categorical distribution. regularized by prior
+  def loss_label(self, input_sequence, output_sequence, sequence_length, control_sequence):
     hparams = self.hparams
     batch_size = hparams.batch_size
 
@@ -170,19 +233,61 @@ class AdversarialMusicVAE(MusicVAE):
                      [(0, 0), (1, 0), (0, 0)])
     x_length = tf.minimum(sequence_length, max_seq_len)
 
-    # Prior distribution.
+    # Prior distribution. Uniform categorical
+    p_label = ds.OneHotCategorical(probs=[1 / hparams.n_clusters for _ in range(hparams.n_clusters)])
+    uniform_label = tf.to_float(tf.stack([p_label.sample() for _ in range(batch_size)]))
+
+    q_label = self.encode_label(input_sequence, x_length, control_sequence)
+    label = tf.to_float(q_label.sample())
+
+    self.loss_D_label = tf.reduce_mean(self.D_label.loss_D(uniform_label, label))
+    self.loss_G_label = tf.reduce_mean(self.D_label.loss_G(uniform_label, label))
+
+    scalars_to_summarize = {
+      'loss_D_label': self.loss_D_label,
+      'loss_G_label': self.loss_G_label,
+    }
+    return {}, scalars_to_summarize
+
+  def loss_latent(self, input_sequence, output_sequence, sequence_length, control_sequence):
+    hparams = self.hparams
+    batch_size = hparams.batch_size
+
+    input_sequence = tf.to_float(input_sequence)
+    output_sequence = tf.to_float(output_sequence)
+
+    max_seq_len = tf.minimum(tf.shape(output_sequence)[1], hparams.max_seq_len)
+
+    input_sequence = input_sequence[:, :max_seq_len]
+
+    if control_sequence is not None:
+      control_depth = control_sequence.shape[-1]
+      control_sequence = tf.to_float(control_sequence)
+      control_sequence = control_sequence[:, :max_seq_len]
+      # Shouldn't be necessary, but the slice loses shape information when
+      # control depth is zero.
+      control_sequence.set_shape([batch_size, None, control_depth])
+
+    # The target/expected outputs.
+    x_target = output_sequence[:, :max_seq_len]
+    # Inputs to be fed to decoder, including zero padding for the initial input.
+    x_input = tf.pad(output_sequence[:, :max_seq_len - 1],
+                     [(0, 0), (1, 0), (0, 0)])
+    x_length = tf.minimum(sequence_length, max_seq_len)
+
+    # Prior distribution. Standard gaussian
     p_z = ds.MultivariateNormalDiag(
       loc=[0.] * hparams.z_size, scale_diag=[1.] * hparams.z_size)
+    gaussian_z = tf.stack([p_z.sample() for _ in range(batch_size)])
 
     q_z = self.encode(input_sequence, x_length, control_sequence)
     z = q_z.sample()
 
-    # TODO: ensure the shape is right. it should be (batch_size, 1)... I think
-    d_loss = self._discriminator.loss(p_z.sample(), z)
-
-    self.d_loss = tf.reduce_mean(d_loss)
+    self.loss_D_latent = tf.reduce_mean(self.D_latent.loss_D(gaussian_z, z))
+    self.loss_G_latent = tf.reduce_mean(self.D_latent.loss_G(gaussian_z, z))
 
     scalars_to_summarize = {
-      'd_loss': self.d_loss,
+      'loss_D_latent': self.loss_D_latent,
+      'loss_G_latent': self.loss_G_latent,
     }
     return {}, scalars_to_summarize
