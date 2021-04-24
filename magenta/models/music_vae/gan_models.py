@@ -291,3 +291,26 @@ class AdversarialMusicVAE(MusicVAE):
       'loss_G_latent': self.loss_G_latent,
     }
     return {}, scalars_to_summarize
+
+  def sample(self, n, max_length=None, z=None, c_input=None, label=None, **kwargs):
+    """Sample with an optional conditional embedding `z`."""
+    if z is not None and int(z.shape[0]) != n:
+      raise ValueError(
+        '`z` must have a first dimension that equals `n` when given. '
+        'Got: %d vs %d' % (z.shape[0], n))
+
+    if self.hparams.z_size and z is None:
+      tf.logging.warning(
+        'Sampling from conditional model without `z`. Using random `z`.')
+      normal_shape = [n, self.hparams.z_size]
+      normal_dist = tfp.distributions.Normal(
+        loc=tf.zeros(normal_shape), scale=tf.ones(normal_shape))
+      z = normal_dist.sample()
+    if self.hparams.n_clusters and label is None:
+      tf.logging.warning(
+        'Sampling from conditional model without `label`. Using random `label`.')
+      cat_dist = ds.OneHotCategorical(probs=[1 / self.hparams.n_clusters for _ in range(self.hparams.n_clusters)])
+      label = cat_dist.sample()
+
+    z = tf.concat(label, z)
+    return self.decoder.sample(n, max_length, z, c_input, **kwargs)
