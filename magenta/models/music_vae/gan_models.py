@@ -310,7 +310,7 @@ class AdversarialMusicVAE(MusicVAE):
       tf.logging.warning(
         'Sampling from conditional model without `label`. Using random `label`.')
       cat_dist = ds.OneHotCategorical(probs=[1 / self.hparams.n_clusters for _ in range(self.hparams.n_clusters)])
-      label = cat_dist.sample()
+      label = tf.to_float(cat_dist.sample())
 
     z = tf.concat(label, z)
     return self.decoder.sample(n, max_length, z, c_input, **kwargs)
